@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "*.rmd": "markdown",
+        "eeprom_24lc256.h": "c"
+    }
+}
