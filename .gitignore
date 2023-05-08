@@ -1,0 +1,6 @@
+# ESP-IDF
+/build
+# /.nvs
+# /partitions.csv
+# sdkconfig
+# sdkconfig.old
