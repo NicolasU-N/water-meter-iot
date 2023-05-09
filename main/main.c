@@ -40,19 +40,9 @@
 #include "eeprom_24lc256.h"
 #include "radio_lora_e5.h"
 
-static RTC_DATA_ATTR struct timeval sleep_enter_time;
-
-const char *TAG_I2C = "I2C";
-const char *TAG_UART = "UART";
-const char *TAG_ADC = "ADC";
-const char *TAG_RS_INTERRUP = "RS_INTERRUP";
-const char *TAG_TIMER = "TIMER";
-const char *TAG_EEPROM = "EEPROM";
-const char *TAG_BATTERY = "BAT";
-
 // TIME CONSTANTS
-#define WAKEUP_TIME_SEC 20	   /*!< Sleep time in seconds */
-#define VOLUME_CALC_TIME_SEC 2 /*!< Calculate volume time in seconds */
+#define WAKEUP_TIME_SEC 30	   /*!< Sleep time in seconds */
+#define VOLUME_CALC_TIME_SEC 3 /*!< Calculate volume time in seconds */
 
 //========================================================================= PIN CONSTANTS
 #define EXT_WAKEUP_PIN_0 27 /*!< Reed switch pin */
@@ -61,8 +51,8 @@ const char *TAG_BATTERY = "BAT";
 
 // ADC
 #define V_BAT_ADC1_CHAN6 ADC_CHANNEL_6 // V_BAT_PIN 34
-#define MIN_VOLTAGE 1200			   // voltaje mínimo en mV
-#define MAX_VOLTAGE 2500			   // voltaje máximo en mV
+#define MIN_VOLTAGE 100				   // voltaje mínimo en mV
+#define MAX_VOLTAGE 1450			   // voltaje máximo en mV
 
 // UART
 #define TX_PIN (GPIO_NUM_17)
@@ -82,9 +72,21 @@ const char *TAG_BATTERY = "BAT";
 #define DR "1"
 
 // WATER METER CONSTANT
-uint16_t pulse_count = 0;
-#define PULSE_FACTOR 9 // Nummber of blinks per L of your meter
+#define DEBOUNCE_DELAY 200 // Intervalo mínimo entre rebotes en milisegundos
+#define PULSE_FACTOR 2	   // Nummber of blinks per L of your meter
 #define get_volume(_pulse_count) (float)(_pulse_count / (float)PULSE_FACTOR)
+uint32_t last_debounce_time = 0;
+uint16_t pulse_count = 0;
+
+static RTC_DATA_ATTR struct timeval sleep_enter_time;
+
+const char *TAG_I2C = "I2C";
+const char *TAG_UART = "UART";
+const char *TAG_ADC = "ADC";
+const char *TAG_TIMER = "TIMER";
+const char *TAG_EEPROM = "EEPROM";
+const char *TAG_BATTERY = "BAT";
+const char *TAG_RS_INTERRUP = "RS_INTERRUP";
 
 esp_err_t init_pins(void);
 esp_err_t init_esp_sleep_conf(void);
@@ -113,7 +115,7 @@ void timer_callback(void *arg)
 		esp_err_t ret1 = eeprom_read_float(0x0, &volume);
 		if (ret1 == ESP_OK)
 		{
-			ESP_LOGI(TAG_EEPROM, "volume read from EEPROM: %f\n", volume);
+			ESP_LOGI(TAG_EEPROM, "Volume read from EEPROM: %f\n", volume);
 		}
 
 		volume += get_volume(pulse_count);
@@ -129,30 +131,59 @@ void timer_callback(void *arg)
 			if (ret1 == ESP_OK)
 			{
 				// printf("Volume read from EEPROM: %f\n", read_vol);
-				ESP_LOGI(TAG_EEPROM, "Volume read from EEPROM: %f", read_vol);
+				ESP_LOGI(TAG_EEPROM, "Current volume: %f", read_vol);
 			}
 		}
 	}
 
-	//======================================================= DELETE TASK int_queue_handler_task_handle
-	// vTaskDelete(int_queue_handler_task_handle);
-	// vTaskDelete(send_data_to_radio_handle);
-	//=======================================================
-
 	//======================================================= DEEP SLEEP
 	// printf("Timer expired, Entering deep sleep\n");
 	ESP_LOGW(TAG_TIMER, "Timer expired, Entering deep sleep");
+
+	// ========================================== GPIO WAKEUP
+	printf("Enabling EXT0 wakeup on pin GPIO%d\n", EXT_WAKEUP_PIN_0);
+
+	esp_sleep_enable_ext0_wakeup(EXT_WAKEUP_PIN_0, !gpio_get_level(EXT_WAKEUP_PIN_0));
+
+	// Configure pullup/downs via RTCIO to tie wakeup pins to inactive level during deepsleep.
+	// EXT0 resides in the same power domain (RTC_PERIPH) as the RTC IO pullup/downs.
+	// No need to keep that power domain explicitly, unlike EXT1.
+	rtc_gpio_set_direction(EXT_WAKEUP_PIN_0, RTC_GPIO_MODE_INPUT_ONLY);
+	rtc_gpio_set_direction_in_sleep(EXT_WAKEUP_PIN_0, RTC_GPIO_MODE_INPUT_ONLY);
+	rtc_gpio_pullup_en(EXT_WAKEUP_PIN_0);
+	rtc_gpio_pulldown_dis(EXT_WAKEUP_PIN_0);
+	// ==========================================
+
 	gettimeofday(&sleep_enter_time, NULL);
 	esp_deep_sleep_start();
 	//=======================================================
 }
 
+/**
+ * @brief manejador de interrupciones para el reed switch
+ *
+ * @param args
+ */
 static void IRAM_ATTR int_handler_reed_sw(void *args)
 {
-	int pin_number = (int)args;
-	xQueueSendFromISR(interput_queue, &pin_number, NULL);
+	uint32_t current_time = xTaskGetTickCount(); // Obtener el tiempo actual
+
+	// Verificar si ha pasado suficiente tiempo desde el último rebote
+	if (current_time - last_debounce_time >= DEBOUNCE_DELAY)
+	{
+		// Procesar la interrupción aquí
+		int pin_number = (int)args;
+		xQueueSendFromISR(interput_queue, &pin_number, NULL);
+		// Actualizar el tiempo de último rebote
+		last_debounce_time = current_time;
+	}
 }
 
+/**
+ * @brief tarea para manejar la cola de interrupciones
+ *
+ * @param pvParameters
+ */
 void int_queue_handler_task(void *pvParameters)
 {
 	int pin_number = 0;
@@ -175,6 +206,11 @@ void int_queue_handler_task(void *pvParameters)
 	}
 }
 
+/**
+ * @brief tarea para enviar los datos a la estación base
+ *
+ * @param pvParameters
+ */
 void send_data_to_radio(void *pvParameters)
 {
 	//? reset the timer so it will be triggered again in 2 seconds rst_one_shot_timer
@@ -228,7 +264,6 @@ void send_data_to_radio(void *pvParameters)
 		ESP_LOGI(TAG_UART, "msg: %s", msg);
 
 		send_message(msg);
-		// pulse_count = 0; //  set pulse count to 0 if data was sent to radio
 	}
 	vTaskDelay(pdMS_TO_TICKS(100));
 
@@ -242,31 +277,34 @@ void send_data_to_radio(void *pvParameters)
 
 void app_main(void)
 {
-	// Inicialización de la cola de interrupciones
-	interput_queue = xQueueCreate(20, sizeof(int));
+	// ?Inicialización de la cola de interrupciones
+	interput_queue = xQueueCreate(16, sizeof(int));
 
-	xTaskCreate(int_queue_handler_task, "int_queue_handler_task", configMINIMAL_STACK_SIZE * 4, NULL, configMAX_PRIORITIES - 3, &int_queue_handler_task_handle);
-	xTaskCreate(send_data_to_radio, "send_data_to_radio", configMINIMAL_STACK_SIZE * 4, NULL, configMAX_PRIORITIES - 2, &send_data_to_radio_handle);
+	xTaskCreate(int_queue_handler_task, "int_queue_handler_task", configMINIMAL_STACK_SIZE * 5, NULL, configMAX_PRIORITIES - 3, &int_queue_handler_task_handle);
+	xTaskCreate(send_data_to_radio, "send_data_to_radio", configMINIMAL_STACK_SIZE * 5, NULL, configMAX_PRIORITIES - 2, &send_data_to_radio_handle);
 	vTaskSuspend(send_data_to_radio_handle);
 
-	// Inicialización de pines
+	//? Inicialización de pines
 	init_pins();
 
-	// Init sleep config
+	//? Init sleep config
 	init_esp_sleep_conf();
 
-	// Init timer
+	//? Init timer
 	esp_timer_create_args_t timer_args = {
 		.callback = &timer_callback,
 		.arg = NULL,
 		.name = "my_timer"};
 	esp_timer_create(&timer_args, &timer_handle);
 
-	// Validar si es el primer arranque
+	//? Validar si es el primer arranque
 	is_first_boot();
 
-	// erase memory
+	//? erase memory
 	// eeprom_erase_all();
+
+	//? read voltage from battery
+	// read_voltage();
 
 	rst_one_shot_timer();
 }
@@ -314,11 +352,13 @@ esp_err_t init_pins()
 						   0));
 
 	// Configurar el pin REED_SW como entrada con pull up
+	rtc_gpio_deinit(EXT_WAKEUP_PIN_0);
 	gpio_config_t reed_sw_config =
 		{.pin_bit_mask = (1ULL << EXT_WAKEUP_PIN_0),
 		 .mode = GPIO_MODE_INPUT,
 		 .pull_up_en = GPIO_PULLUP_ENABLE,
-		 .intr_type = GPIO_INTR_NEGEDGE};
+		 .pull_down_en = GPIO_PULLDOWN_DISABLE,
+		 .intr_type = GPIO_INTR_POSEDGE};
 	ESP_ERROR_CHECK(gpio_config(&reed_sw_config));
 
 	// Configurar interrupción para el pin REED_SW
@@ -376,7 +416,7 @@ esp_err_t init_esp_sleep_conf()
 	{
 	case ESP_SLEEP_WAKEUP_EXT0:
 	{
-		printf("Wake up from ext0\n");
+		printf("Wake up from ext0 level -> %d\n", (int)rtc_gpio_get_level(EXT_WAKEUP_PIN_0));
 		int pin_number = EXT_WAKEUP_PIN_0;
 		if (!xQueueSend(interput_queue, &pin_number, 0))
 		{
@@ -402,17 +442,6 @@ esp_err_t init_esp_sleep_conf()
 	// =============================================================== TIMER WAKEUP
 	printf("Enabling timer wakeup, %ds\n", WAKEUP_TIME_SEC);
 	esp_sleep_enable_timer_wakeup(WAKEUP_TIME_SEC * 1000000);
-	// ===============================================================
-
-	// =============================================================== GPIO WAKEUP
-	printf("Enabling EXT0 wakeup on pin GPIO%d\n", EXT_WAKEUP_PIN_0);
-	esp_sleep_enable_ext0_wakeup(EXT_WAKEUP_PIN_0, ESP_EXT1_WAKEUP_ALL_LOW);
-
-	// Configure pullup/downs via RTCIO to tie wakeup pins to inactive level during deepsleep.
-	// EXT0 resides in the same power domain (RTC_PERIPH) as the RTC IO pullup/downs.
-	// No need to keep that power domain explicitly, unlike EXT1.
-	rtc_gpio_pullup_en(EXT_WAKEUP_PIN_0);
-	rtc_gpio_pulldown_dis(EXT_WAKEUP_PIN_0);
 	// ===============================================================
 
 #if CONFIG_IDF_TARGET_ESP32
@@ -471,53 +500,54 @@ esp_err_t is_first_boot()
 void rst_one_shot_timer()
 {
 	esp_timer_stop(timer_handle); // detener el timer
-	// esp_timer_start_once(timer_handle, VOLUME_CALC_TIME_SEC * 1000000); // 2 seconds in microseconds
 	eTaskState task_state = eTaskGetState(send_data_to_radio_handle);
 	if (task_state == eDeleted || task_state == eSuspended)
 	{
-		ESP_LOGI(TAG_TIMER, " (rst_one_shot_timer) Timer has started");
+		ESP_LOGI(TAG_TIMER, "(rst_one_shot_timer) Timer has started");
 		// ESP INIT TIMER
 		esp_timer_start_once(timer_handle, VOLUME_CALC_TIME_SEC * 1000000); // 2 seconds in microseconds
 	}
 	else
 	{
-		// printf(" (send_data_to_radio) esta corriendo o en otro estado\n");
-		ESP_LOGI(TAG_TIMER, " (rst_one_shot_timer) Timer has not started");
+		ESP_LOGI(TAG_TIMER, "(rst_one_shot_timer) Timer has not started");
 	}
 }
 
+/**
+ * @brief Leer el voltaje de la batería
+ *
+ * @return float
+ */
 float read_voltage()
 {
 	// Leer el valor del pin analógico
 	int adc_reading = 0;
 	int adc_volt = 0;
-	uint8_t num_readings = 10; // cantidad de lecturas
+	int sum = 0;
 
 	// SET PIN EN_BAT_PIN TO HIGH
 	gpio_set_level(EN_BAT_PIN, 1);
 
 	if (do_calibration1)
 	{
-		for (uint8_t i = 0; i < num_readings; i++)
+		for (int i = 0; i < 10; i++)
 		{
-			// adc_reading += adc1_get_raw(V_BAT_PIN);
 			adc_oneshot_read(adc1_handle, V_BAT_ADC1_CHAN6, &adc_reading);
-			vTaskDelay(pdMS_TO_TICKS(50)); // esperar un poco antes de tomar la siguiente lectura
+			// ESP_LOGI(TAG_ADC, "ADC -> %d", adc_reading);
+			// vTaskDelay(pdMS_TO_TICKS(5)); // esperar un poco antes de tomar la siguiente lectura
 			adc_cali_raw_to_voltage(adc1_cali_handle, adc_reading, &adc_volt);
-			vTaskDelay(pdMS_TO_TICKS(50)); // esperar un poco antes de tomar la siguiente lectura
+			vTaskDelay(pdMS_TO_TICKS(10)); // esperar un poco antes de tomar la siguiente lectura
+			sum += adc_volt;
 		}
+		adc_volt = sum / 10;
 	}
 	else
 	{
 		ESP_LOGE(TAG_BATTERY, "Error in calibration");
 	}
-	adc_volt /= num_readings;
-
 	// SET PIN EN_BAT_PIN TO LOW
 	gpio_set_level(EN_BAT_PIN, 0);
-	// Convertir el valor leído a voltaje
-	// Compensate in software using the ratio (6405882/6800000)
-	// float voltage = (float)adc_reading * 3.3 / (float)4095 / (float)(6405882 / 6800000);
+	// ESP_LOGI(TAG_ADC, "ADC BATT VOLT -> %d", adc_volt);
 	return (float)adc_volt;
 }
 
