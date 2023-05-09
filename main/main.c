@@ -52,7 +52,7 @@
 // ADC
 #define V_BAT_ADC1_CHAN6 ADC_CHANNEL_6 // V_BAT_PIN 34
 #define MIN_VOLTAGE 100				   // voltaje mínimo en mV
-#define MAX_VOLTAGE 1450			   // voltaje máximo en mV
+#define MAX_VOLTAGE 1440			   // voltaje máximo en mV
 
 // UART
 #define TX_PIN (GPIO_NUM_17)
@@ -72,7 +72,7 @@
 #define DR "1"
 
 // WATER METER CONSTANT
-#define DEBOUNCE_DELAY 200 // Intervalo mínimo entre rebotes en milisegundos
+#define DEBOUNCE_DELAY 300 // Intervalo mínimo entre rebotes en milisegundos
 #define PULSE_FACTOR 2	   // Nummber of blinks per L of your meter
 #define get_volume(_pulse_count) (float)(_pulse_count / (float)PULSE_FACTOR)
 uint32_t last_debounce_time = 0;
