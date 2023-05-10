@@ -72,7 +72,7 @@
 #define DR "1"
 
 // WATER METER CONSTANT
-#define DEBOUNCE_DELAY 300 // Intervalo mínimo entre rebotes en milisegundos
+#define DEBOUNCE_DELAY 200 // Intervalo mínimo entre rebotes en milisegundos
 #define PULSE_FACTOR 2	   // Nummber of blinks per L of your meter
 #define get_volume(_pulse_count) (float)(_pulse_count / (float)PULSE_FACTOR)
 uint32_t last_debounce_time = 0;
@@ -547,7 +547,7 @@ float read_voltage()
 	}
 	// SET PIN EN_BAT_PIN TO LOW
 	gpio_set_level(EN_BAT_PIN, 0);
-	// ESP_LOGI(TAG_ADC, "ADC BATT VOLT -> %d", adc_volt);
+	ESP_LOGI(TAG_ADC, "ADC BATT VOLT -> %d", adc_volt);
 	return (float)adc_volt;
 }
 
