@@ -41,7 +41,7 @@
 #include "radio_lora_e5.h"
 
 // TIME CONSTANTS
-#define WAKEUP_TIME_SEC 30	   /*!< Sleep time in seconds */
+#define WAKEUP_TIME_SEC 60	   /*!< Sleep time in seconds */
 #define VOLUME_CALC_TIME_SEC 3 /*!< Calculate volume time in seconds */
 
 //========================================================================= PIN CONSTANTS
@@ -51,8 +51,8 @@
 
 // ADC
 #define V_BAT_ADC1_CHAN6 ADC_CHANNEL_6 // V_BAT_PIN 34
-#define MIN_VOLTAGE 100				   // voltaje mínimo en mV
-#define MAX_VOLTAGE 1440			   // voltaje máximo en mV
+#define MIN_VOLTAGE 610				   // voltaje mínimo en mV
+#define MAX_VOLTAGE 1010			   // voltaje máximo en mV
 
 // UART
 #define TX_PIN (GPIO_NUM_17)
