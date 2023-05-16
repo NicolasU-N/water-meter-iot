@@ -177,27 +177,51 @@ bool join_the_things_network()
     return false;
 }
 
-void send_message(char *message)
+void send_message(char *message, uint8_t iterations)
 {
-    // Enviar mensaje
-    char send_msg[TX_BUF_SIZE - 5];
-    snprintf(send_msg, TX_BUF_SIZE, "+MSG=\"%s\"", message);
-    send_AT(send_msg);
+    int completed_iterations = 0;
 
-    // Esperar hasta que se complete el envío o falle
-    int done = 0;
-    while (!done)
+    while (completed_iterations < iterations)
     {
-        char *data = receive_uart();
-        if (strstr(data, "Done") != NULL || strstr(data, "ERROR") != NULL)
+        // Enviar mensaje
+        char send_msg[TX_BUF_SIZE - 5];
+        snprintf(send_msg, TX_BUF_SIZE, "+MSG=\"%s\"", message);
+        send_AT(send_msg);
+
+        // Esperar hasta que se complete el envío o falle
+        bool done = false;
+        bool sent = false;
+        while (!done)
         {
-            done = 1;
+            char *data = receive_uart();
+            if (strstr(data, "Done") != NULL || strstr(data, "ERROR") != NULL)
+            {
+                done = true;
+            }
+            if (strlen(data) > 0)
+            {
+                printf("%s", data);
+                if (strstr(data, "RSSI") != NULL)
+                {
+                    done = true; // Exit the loop if "RSSI" is found in the payload
+                    sent = true;
+                    break;
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
-        if (strlen(data) > 0)
+
+        if (sent)
         {
-            printf("%s", data);
+            ESP_LOGI(TAG_UART, "Message sent successfully");
+            break;
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        else
+        {
+            ESP_LOGE(TAG_UART, "Message failed to send");
+        }
+
+        completed_iterations++;
     }
 }
 

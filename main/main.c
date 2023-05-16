@@ -263,7 +263,7 @@ void send_data_to_radio(void *pvParameters)
 		snprintf(msg, sizeof(msg), "{'vol':%.1f,'batt_lvl':%.1f}", volume, battery_percentage);
 		ESP_LOGI(TAG_UART, "msg: %s", msg);
 
-		send_message(msg);
+		send_message(msg, 10); // Enviar el mensaje hasta 10 veces para que llegue al gateway
 	}
 	vTaskDelay(pdMS_TO_TICKS(100));
 

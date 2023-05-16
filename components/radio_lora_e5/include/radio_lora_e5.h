@@ -22,7 +22,7 @@ void get_eui_from_radio();
 void set_app_key(char *app_key);
 void configure_regional_settings(char *band, char *DR, char *channels);
 bool join_the_things_network();
-void send_message(char *message);
+void send_message(char *message, uint8_t iterations);
 void set_radio_low_power();
 
 #endif
