@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <inttypes.h>
 #include <ctype.h>
+#include <math.h>
 
 #include "sdkconfig.h"
 #include "soc/soc_caps.h"
@@ -42,7 +43,7 @@
 
 // TIME CONSTANTS
 #define WAKEUP_TIME_SEC 60	   /*!< Sleep time in seconds */
-#define VOLUME_CALC_TIME_SEC 3 /*!< Calculate volume time in seconds */
+#define VOLUME_CALC_TIME_SEC 4 /*!< Calculate volume time in seconds */
 
 //========================================================================= PIN CONSTANTS
 #define EXT_WAKEUP_PIN_0 27 /*!< Reed switch pin */
@@ -51,8 +52,8 @@
 
 // ADC
 #define V_BAT_ADC1_CHAN6 ADC_CHANNEL_6 // V_BAT_PIN 34
-#define MIN_VOLTAGE 610				   // voltaje mínimo en mV
-#define MAX_VOLTAGE 1010			   // voltaje máximo en mV
+#define MIN_VOLTAGE 751				   // voltaje mínimo en mV
+#define MAX_VOLTAGE 2015			   // voltaje máximo en mV
 
 // UART
 #define TX_PIN (GPIO_NUM_17)
@@ -117,8 +118,17 @@ void timer_callback(void *arg)
 		{
 			ESP_LOGI(TAG_EEPROM, "Volume read from EEPROM: %f\n", volume);
 		}
+		// validar que volume sea diferente nan, si es nan, asignarle el valor de get_volume(pulse_count)
+		if (isnan(volume))
+		{
+			volume = get_volume(pulse_count);
+		}
+		else
+		{
+			volume += get_volume(pulse_count);
+		}
 
-		volume += get_volume(pulse_count);
+		// volume += get_volume(pulse_count);
 		ESP_LOGI(TAG_TIMER, "Volume: %f", volume);
 
 		ret1 = eeprom_update_float(0x0, volume);
