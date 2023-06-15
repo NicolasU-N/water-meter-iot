@@ -42,18 +42,22 @@
 #include "radio_lora_e5.h"
 
 // TIME CONSTANTS
-#define WAKEUP_TIME_SEC 60	   /*!< Sleep time in seconds */
+#define WAKEUP_TIME_SEC 10	   /*!< Sleep time in seconds */
 #define VOLUME_CALC_TIME_SEC 4 /*!< Calculate volume time in seconds */
 
 //========================================================================= PIN CONSTANTS
+#define USER_ID 1 // Cambia a tu ID de usuario
+
 #define EXT_WAKEUP_PIN_0 27 /*!< Reed switch pin */
 // #define FLOW_SENSOR_PIN 4
 #define EN_BAT_PIN 13
 
 // ADC
 #define V_BAT_ADC1_CHAN6 ADC_CHANNEL_6 // V_BAT_PIN 34
-#define MIN_VOLTAGE 751				   // voltaje mínimo en mV
-#define MAX_VOLTAGE 2015			   // voltaje máximo en mV
+// Values based on the discharge curve of your 18650 battery.
+#define VOLTAGE_FULLY_CHARGED 4.2
+#define VOLTAGE_FULLY_DISCHARGED 3.0
+#define VOLTAGE_RANGE (VOLTAGE_FULLY_CHARGED - VOLTAGE_FULLY_DISCHARGED)
 
 // UART
 #define TX_PIN (GPIO_NUM_17)
@@ -73,7 +77,7 @@
 #define DR "1"
 
 // WATER METER CONSTANT
-#define DEBOUNCE_DELAY 200 // Intervalo mínimo entre rebotes en milisegundos
+#define DEBOUNCE_DELAY 150 // Intervalo mínimo entre rebotes en milisegundos
 #define PULSE_FACTOR 2	   // Nummber of blinks per L of your meter
 #define get_volume(_pulse_count) (float)(_pulse_count / (float)PULSE_FACTOR)
 uint32_t last_debounce_time = 0;
@@ -240,21 +244,12 @@ void send_data_to_radio(void *pvParameters)
 
 		//? read voltage from battery
 		float v_bat = read_voltage(); // voltaje en mV
-		ESP_LOGI(TAG_BATTERY, "voltage read from battery mV: %f\n", v_bat);
+		ESP_LOGI(TAG_BATTERY, "Voltage read from battery mV: %f\n", v_bat);
 
-		float battery_percentage = ((v_bat - MIN_VOLTAGE) / (MAX_VOLTAGE - MIN_VOLTAGE)) * 100.0;
+		float battery_level = (v_bat - VOLTAGE_FULLY_DISCHARGED) / VOLTAGE_RANGE * 100;
 
-		if (battery_percentage < 0)
-		{
-			battery_percentage = 0;
-		}
-		else if (battery_percentage > 100)
-		{
-			battery_percentage = 100;
-		}
-
-		ESP_LOGI(TAG_BATTERY, "Battery percentage: %f%%", battery_percentage);
-		// printf("Battery percentage: %f%%\n", battery_percentage);
+		ESP_LOGI(TAG_BATTERY, "Battery percentage: %f%%", battery_level);
+		// printf("Battery percentage: %f%%\n", battery_level);
 
 		//? send the volume to the gateway
 		ESP_LOGI(TAG_UART, "sending messages...");
@@ -269,8 +264,9 @@ void send_data_to_radio(void *pvParameters)
 
 		volume += get_volume(pulse_count);
 
-		char msg[64];
-		snprintf(msg, sizeof(msg), "{'vol':%.1f,'batt_lvl':%.1f}", volume, battery_percentage);
+		char msg[128];
+		// snprintf(msg, sizeof(msg), "{'usr_id':%d,'vol':%.1f,'batt':%.1f}", USER_ID, volume, battery_level);
+		snprintf(msg, sizeof(msg), "%d;%.1f;%.1f", USER_ID, volume, battery_level);
 		ESP_LOGI(TAG_UART, "msg: %s", msg);
 
 		send_message(msg, 10); // Enviar el mensaje hasta 10 veces para que llegue al gateway
